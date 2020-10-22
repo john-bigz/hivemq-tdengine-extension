@@ -45,6 +45,8 @@ public class TDengineConfiguration extends PropertiesReader {
 
     private static final String MQTT_TOPIC = "mqtt_topic";
     private static final String MQTT_TOPIC_DEFAULT = "application/sensor_data";
+    private static final String MQTT_CODER = "msg_coder";
+    private static final String MQTT_CODER_DEFAULT = "json";
 
     private static final String SQL_CREATE_DATABASE = "sql.create_database";
     private static final String SQL_CREATE_DATABASE_DEFAULT = "create database if not exists hivemqdb;";
@@ -102,6 +104,7 @@ public class TDengineConfiguration extends PropertiesReader {
         countError += checkMandatoryProperty(SQL_CREATE_DATABASE);
         countError += checkMandatoryProperty(SQL_CREATE_TABLE);
         countError += checkMandatoryProperty(SQL_INSERT_TABLE);
+        countError += checkMandatoryProperty(MQTT_CODER);
         
         if (countError != 0){
             return false;
@@ -302,6 +305,11 @@ public class TDengineConfiguration extends PropertiesReader {
     @NotNull
     public String getMqtttopic() {
         return validateStringProperty(MQTT_TOPIC, MQTT_TOPIC_DEFAULT);
+    }
+
+    @NotNull
+    public String getMqttCoder() {
+        return validateStringProperty(MQTT_CODER, MQTT_CODER_DEFAULT);
     }
     
     @Override

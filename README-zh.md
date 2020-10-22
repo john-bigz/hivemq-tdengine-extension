@@ -119,7 +119,9 @@ curl -H 'Authorization: Basic cm9vdDp0YW9zZGF0YQ==' -d 'select * from hivemqdb.s
 ```properties
 # 模式选择: jdbc or http
 mode=jdbc
-# MQTT主题
+# msg_coder: base64 or json
+msg_coder=json
+# mqtt_topic: only available when msg_coder is json
 mqtt_topic=application/sensor_data
 
 # 创建TDEngine数据库SQL语句
@@ -357,6 +359,59 @@ create table if not exists sensor_data_20 using sensor_data tags(20);
 
 ```
 详细的TDengine SQL语法说明，请参考<a href="https://www.taosdata.com/cn/documentation/model/#%E5%88%9B%E5%BB%BA%E8%A1%A8">TDengine网站: 数据建模</a>。
+<br><br><br>
+
+### 6.4 mqttloader压力测试
+使用mqttloader进行测试，将发布的主题和内容保存到TDengine表中,其中消息内容采用Base64编码。
+
+#### 1.配置文件
+```
+# mode: jdbc or http
+mode=jdbc
+# msg_coder: base64 or json
+msg_coder=base64
+# mqtt_topic: only available when msg_coder is json
+mqtt_topic=application/sensor_data
+
+
+sql.create_database=create database if not exists hivemqdb;
+sql.create_table=create table if not exists hivemqdb.sensor_data (ts timestamp, topic nchar(1024), payload nchar(1024) );
+sql.insert_table=insert into hivemqdb.sensor_data VALUES (now, '${topic}', '${payload}');
+
+#JDBC settings
+jdbc.driverClass=com.taosdata.jdbc.TSDBDriver
+jdbc.url=jdbc:TAOS://127.0.0.1:6030/log
+jdbc.username=root
+jdbc.password=taosdata
+jdbc.pool.init=1
+jdbc.pool.minIdle=3
+jdbc.pool.maxActive=20
+jdbc.testSql=select server_status();
+
+#HTTP settings
+http.url=http://127.0.0.1:6041/rest/sql/
+http.token=root:taosdata
+
+```
+#### 2.测试结果
+```
+$ bin/mqttloader -b tcp://127.0.0.1:1883 -p 10 -s 10 -m 1000 -t application/sensor_data
+
+-----Publisher-----
+Maximum throughput[msg/s]: 9478
+Average throughput[msg/s]: 5000.00
+Number of published messages: 10000
+Per second throughput[msg/s]: 9478, 522
+
+-----Subscriber-----
+Maximum throughput[msg/s]: 42517
+Average throughput[msg/s]: 12500.00
+Number of received messages: 100000
+Per second throughput[msg/s]: 694, 1247, 879, 1305, 12229, 30946, 42517, 10183
+Maximum latency[ms]: 6806
+Average latency[ms]: 5367.31
+
+```
 <br><br><br>
 
 ## 7 设计说明

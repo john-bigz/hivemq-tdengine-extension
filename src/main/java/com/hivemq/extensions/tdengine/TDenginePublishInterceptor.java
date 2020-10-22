@@ -64,10 +64,29 @@ public class TDenginePublishInterceptor implements PublishInboundInterceptor {
     
     private final Map<String, Object> headers = Maps.newHashMap();
 
+    private final boolean jdbcMode;
+    private final String sqlTemplate;
+    private final boolean jsonEnabled;
+    private final String httpURL;
+    
     public TDenginePublishInterceptor(@NotNull final TDengineConfiguration configuration, final DataSource datasource) {
 		this.configuration = configuration;
 		this.datasource = datasource;
-
+        this.sqlTemplate = configuration.getInsertTableSQL().toLowerCase();
+        this.httpURL = configuration.getHttpUrl();
+        
+        if (StringUtils.equalsIgnoreCase(configuration.getMode(), "jdbc")) { 
+        	this.jdbcMode = true;
+        } else {
+        	this.jdbcMode = false;
+        }
+        
+        if (StringUtils.equalsIgnoreCase(configuration.getMqttCoder(), "base64")) { 
+        	this.jsonEnabled = false;
+        } else {
+        	this.jsonEnabled = true;
+        }
+        
 		if (StringUtils.equalsIgnoreCase(configuration.getMode(), "http")) { 
 			final String Auth = "Basic " + Base64.getEncoder().encodeToString(configuration.getHttpToken().getBytes());
 			headers.put("Authorization", Auth);
@@ -86,20 +105,33 @@ public class TDenginePublishInterceptor implements PublishInboundInterceptor {
         if (!payload.isPresent()) {
             return;
         }
-        final String payloadAsString = getStringFromByteBuffer(payload.orElse(null));
-        if (payloadAsString == null || payloadAsString.length() == 0) {
-            return;
+        String sql;
+        if (jsonEnabled) {
+	        final String payloadAsString = getStringFromByteBuffer(payload.orElse(null));
+	        if (payloadAsString == null || payloadAsString.length() == 0) {
+	            return;
+	        }
+	
+	        sql = getJsonSQL(topic, payloadAsString.replace("'", "\\'"));
+	        if (StringUtils.isBlank(sql)) {
+	            return;
+	        }
+        } else {
+        	final byte[] buf = getBytesFromByteBuffer(payload.get());
+	        if (buf == null) {
+	            return;
+	        }
+	        
+        	sql = getBase64SQL(topic, buf);
+	        if (StringUtils.isBlank(sql)) {
+	            return;
+	        }
         }
-
-        final String sql = getSQL(payloadAsString);
-        if (StringUtils.isBlank(sql)) {
-            return;
-        }
-
+        
         final Async<PublishInboundOutput> asyncOutput = publishInboundOutput.async(Duration.ofSeconds(10), TimeoutFallback.FAILURE);
         final CompletableFuture<?> taskFuture = Services.extensionExecutorService().submit(() -> {
             try {
-                if (StringUtils.equalsIgnoreCase(configuration.getMode(), "jdbc")) { 
+                if (jdbcMode) { 
                     Connection  connection = datasource.getConnection(); 
                     Statement statement = null;
                     try {
@@ -123,7 +155,7 @@ public class TDenginePublishInterceptor implements PublishInboundInterceptor {
                     }
                 } else {
                     if (headers != null && headers.size() > 0) {
-                        HttpClientUtil.httpPostRequest(configuration.getHttpUrl(), headers, sql);
+                        HttpClientUtil.httpPostRequest(httpURL, headers, sql);
                     }
                 }
             } catch (Exception e) {
@@ -141,16 +173,31 @@ public class TDenginePublishInterceptor implements PublishInboundInterceptor {
     
 	/**
 	 * replace the placeholder with the actual field.
-	 * @param payloadAsString
+	 * @param topic
+	 * @param buf
 	 * @return the sql string
 	 */
-    private String getSQL(String payloadAsString) {
-        Map<String, String> map = getKVMap(payloadAsString);
+    private String getBase64SQL(String topic, byte[] buf) {
+		String payload = Base64.getEncoder().encodeToString(buf);
+    	String sql = StringUtils.replace(sqlTemplate, "${topic}", topic);
+		sql = StringUtils.replace(sql, "${payload}", payload);
+		return sql;
+    }
+    
+	/**
+	 * replace the placeholder with the actual field.
+	 * @param topic
+	 * @param payload
+	 * @return the sql string
+	 */
+    private String getJsonSQL(String topic, String payload) {
+    	String sql = sqlTemplate;
+
+        Map<String, String> map = getKVMap(payload);
         if (map ==null || map.size() ==0) {
         	return null;
         }
         
-        String sql = configuration.getInsertTableSQL();
         StringBuilder sb = new StringBuilder();
         Iterator<String> iter = map.keySet().iterator();
         while (iter.hasNext()) {
@@ -194,5 +241,15 @@ public class TDenginePublishInterceptor implements PublishInboundInterceptor {
             bytes[i] = buffer.get(i);
         }
         return new String(bytes, Charset.defaultCharset()).trim();
+    }
+	
+	@Nullable
+    private static byte[] getBytesFromByteBuffer(final @Nullable ByteBuffer buffer) {
+        if (buffer == null) {
+            return null;
+        }
+        final byte[] bytes = new byte[buffer.limit()];
+        buffer.get(bytes);
+        return bytes;
     }
 }
